@@ -146,8 +146,8 @@ input[type=text],input[type=password],input[type=date],select,textarea{backgroun
 // ============================================================
 // CONFIG SUPABASE  — TROQUE PELOS SEUS DADOS
 // ============================================================
-var SUPABASE_URL = 'https://SEU-PROJETO.supabase.co';
-var SUPABASE_ANON_KEY = 'SUA-ANON-KEY';
+var SUPABASE_URL = 'https://ftqhdksoinmtedmrighu.supabase.co';
+var SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ0cWhka3NvaW5tdGVkbXJpZ2h1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMzMDczNjksImV4cCI6MjA5ODg4MzM2OX0.fdvxZ_Nx79DWkUgKkhT9dLpS_AdoCCwLP8A8mGeE5UA';
 var sb = null;
 try { sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY); } catch(e){ console.warn('Supabase não configurado', e); }
 
@@ -157,9 +157,9 @@ try { sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY); } catch(e){ c
 // ============================================================
 var USUARIOS = {
   'gestora':      {senha:'gestora123',   role:'gestora',     nome:'Gestora',      cor:'#4ade80', corBg:'rgba(74,222,128,.15)'},
-  'funcionaria1': {senha:'func123',      role:'funcionaria', nome:'Funcionária 1',cor:'#60a5fa', corBg:'rgba(96,165,250,.15)'},
-  'funcionaria2': {senha:'func123',      role:'funcionaria', nome:'Funcionária 2',cor:'#c084fc', corBg:'rgba(192,132,252,.15)'},
-  'funcionaria3': {senha:'func123',      role:'funcionaria', nome:'Funcionária 3',cor:'#fb923c', corBg:'rgba(251,146,60,.15)'},
+  'loren': {senha:'loren123',      role:'funcionaria', nome:'Loren',cor:'#60a5fa', corBg:'rgba(96,165,250,.15)'},
+  'ana': {senha:'ana123',      role:'funcionaria', nome:'Ana Clara',cor:'#c084fc', corBg:'rgba(192,132,252,.15)'},
+  'helena': {senha:'helena123',      role:'funcionaria', nome:'Helena',cor:'#fb923c', corBg:'rgba(251,146,60,.15)'},
   'rafael':       {senha:'rafael123',    role:'rafael',      nome:'Rafael',       cor:'#38bdf8', corBg:'rgba(56,189,248,.15)'},
 };
 
