@@ -114,6 +114,8 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:1
 .btn-ghost{padding:11px 18px;background:var(--surface2);border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-family:var(--sans);font-size:13px;cursor:pointer;}
 .btn-save{padding:11px 20px;background:var(--accent);color:#0a1a0f;border:none;border-radius:8px;font-family:var(--sans);font-size:13px;font-weight:600;cursor:pointer;}
 .btn-danger{padding:11px 18px;background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.3);border-radius:8px;color:var(--danger);font-family:var(--sans);font-size:13px;cursor:pointer;}
+.btn-edit{padding:11px 18px;background:var(--surface2);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-family:var(--sans);font-size:13px;cursor:pointer;}
+.btn-edit:hover{border-color:var(--accent);color:var(--accent);}
 /* TIMELINE */
 .timeline{margin-top:14px;border-top:1px solid var(--border);padding-top:14px;}
 .tl-item{display:flex;gap:10px;font-size:12px;margin-bottom:10px;}
@@ -207,7 +209,7 @@ var state = {
   demandas:[], historico:[], carregado:false,
   filtroStatus:'todos', filtroResp:'todos',
   modalNova:false, modalData:{},
-  cardAberto:null,
+  cardAberto:null, editData:null,
 };
 
 // ============================================================
@@ -246,7 +248,7 @@ var _rtChannel=null;
 async function recarregarSilencioso(){
   if(state.tela!=='app') return;
   await carregarDemandas();
-  var modalAberto = state.modalNova || state.cardAberto;
+  var modalAberto = state.modalNova || state.cardAberto || state.editData;
   if(!modalAberto){ render(); }
 }
 
@@ -392,12 +394,13 @@ function renderApp(){
     +'<div class="main">'+content+'</div>'
     +'</div>'
     +(state.modalNova?renderModalNova():'')
-    +(state.cardAberto?renderModalCard():'');
+    +(state.cardAberto?renderModalCard():'')
+    +(state.editData?renderModalEditar():'');
 }
 function roleLabel(r){ return r==='gestora'?'Gestora':r==='rafael'?'Validação':'Equipe de Pesquisa'; }
 
-function irPara(p){ state.pagina=p; state.cardAberto=null; render(); }
-function logout(){ try{ if(_rtChannel){ sb.removeChannel(_rtChannel); _rtChannel=null; } }catch(e){} state.tela='login'; state.usuario=null; state.role=null; state.cardAberto=null; render(); }
+function irPara(p){ state.pagina=p; state.cardAberto=null; state.editData=null; render(); }
+function logout(){ try{ if(_rtChannel){ sb.removeChannel(_rtChannel); _rtChannel=null; } }catch(e){} state.tela='login'; state.usuario=null; state.role=null; state.cardAberto=null; state.editData=null; render(); }
 
 // ---- QUADRO 1: EQUIPE ----
 function renderQuadroEquipe(){
@@ -745,6 +748,56 @@ async function salvarNova(){
 // ---- MODAL DETALHE / TIMELINE ----
 function abrirCard(id){ state.cardAberto=id; render(); }
 function fecharCard(){ state.cardAberto=null; render(); }
+
+// ---- MODAL EDITAR (só gestora) ----
+function abrirModalEditar(id){
+  var d=state.demandas.find(function(x){return x.id===id;});
+  if(!d)return;
+  state.cardAberto=null;
+  state.editData={id:d.id, titulo:d.titulo, responsavel:d.responsavel, prioridade:d.prioridade, prazo:d.prazo||'', descricao:d.descricao||''};
+  render();
+}
+function fecharModalEditar(){ state.editData=null; render(); }
+function renderModalEditar(){
+  var d=state.editData;
+  var respOpts=funcionarias().map(function(f){return'<option value="'+f+'"'+(d.responsavel===f?' selected':'')+'>'+esc(u(f).nome)+'</option>';}).join('');
+  var prioOpts=Object.keys(PRIORIDADES).map(function(p){return'<option value="'+p+'"'+(d.prioridade===p?' selected':'')+'>'+PRIORIDADES[p]+'</option>';}).join('');
+  return '<div class="modal-overlay" onclick="if(event.target===this)fecharModalEditar()"><div class="modal">'
+    +'<div class="modal-title">Editar demanda</div>'
+    +'<div class="modal-field"><label>TÍTULO</label><input type="text" id="e-titulo" value="'+esc(d.titulo||'')+'"></div>'
+    +'<div class="modal-field"><label>RESPONSÁVEL</label><select id="e-resp">'+respOpts+'</select></div>'
+    +'<div class="modal-field"><label>PRIORIDADE</label><select id="e-prio">'+prioOpts+'</select></div>'
+    +'<div class="modal-field"><label>PRAZO</label><input type="date" id="e-prazo" value="'+esc(d.prazo||'')+'"></div>'
+    +'<div class="modal-field"><label>DESCRIÇÃO</label><textarea id="e-desc">'+esc(d.descricao||'')+'</textarea></div>'
+    +'<div class="modal-actions"><button class="btn-ghost" onclick="fecharModalEditar()">Cancelar</button><button class="btn-save" onclick="salvarEdicao()">Salvar alterações</button></div>'
+    +'</div></div>';
+}
+async function salvarEdicao(){
+  var d=state.editData;
+  var titulo=document.getElementById('e-titulo').value.trim();
+  if(!titulo){ showToast('Informe o título'); return; }
+  var novoResp=document.getElementById('e-resp').value;
+  var atual=state.demandas.find(function(x){return x.id===d.id;});
+  var respMudou = atual && atual.responsavel!==novoResp;
+  var patch={
+    titulo:titulo,
+    responsavel:novoResp,
+    prioridade:document.getElementById('e-prio').value,
+    prazo:document.getElementById('e-prazo').value||null,
+    descricao:document.getElementById('e-desc').value.trim(),
+    atualizado_em:new Date().toISOString()
+  };
+  await sb.from('demandas').update(patch).eq('id',d.id);
+  if(respMudou){
+    await logHistorico(d.id,'edicao', u(atual.responsavel).nome, u(novoResp).nome);
+  }else{
+    await logHistorico(d.id,'edicao', null, null);
+  }
+  state.editData=null;
+  showToast('Demanda atualizada');
+  await carregarDemandas(); render();
+}
+
 function renderModalCard(){
   var d=state.demandas.find(function(x){return x.id===state.cardAberto;});
   if(!d){ return ''; }
@@ -755,7 +808,8 @@ function renderModalCard(){
     var txt = h.tipo==='criada' ? 'Demanda criada' :
               h.tipo==='status' ? 'Status: '+h.de+' → '+h.para :
               h.tipo==='validacao' ? 'Validação: '+h.para :
-              h.tipo==='quadro' ? 'Movida: '+h.de+' → '+h.para : h.para;
+              h.tipo==='quadro' ? 'Movida: '+h.de+' → '+h.para :
+              h.tipo==='edicao' ? (h.de&&h.para ? 'Demanda editada · responsável: '+h.de+' → '+h.para : 'Demanda editada') : h.para;
     return '<div class="tl-item"><div class="tl-dot"></div><div><div class="tl-text">'+esc(txt)+'</div><div class="tl-time">'+fmtDataHora(h.em)+' · '+esc(u(h.autor).nome)+'</div></div></div>';
   }).join('') || '<div class="tl-text" style="font-size:12px;color:var(--text3)">Sem histórico ainda.</div>';
 
@@ -765,6 +819,7 @@ function renderModalCard(){
   }
 
   var btnExcluir = isGestora ? '<button class="btn-danger" onclick="excluirDemanda(\''+d.id+'\')">Excluir</button>' : '';
+  var btnEditar = isGestora ? '<button class="btn-edit" onclick="abrirModalEditar(\''+d.id+'\')">Editar</button>' : '';
 
   return '<div class="modal-overlay" onclick="if(event.target===this)fecharCard()"><div class="modal">'
     +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:14px">'
@@ -777,7 +832,7 @@ function renderModalCard(){
     +(d.prazo?'<div style="font-size:12px;font-family:var(--mono);color:var(--text3);margin-bottom:6px">PRAZO</div><div style="margin-bottom:14px;font-size:13px">📅 '+fmtData(d.prazo)+'</div>':'')
     +(d.descricao?'<div style="font-size:12px;font-family:var(--mono);color:var(--text3);margin-bottom:6px">DESCRIÇÃO</div><div style="margin-bottom:14px;font-size:13px;color:var(--text2);line-height:1.5">'+esc(d.descricao)+'</div>':'')
     +'<div class="section-title" style="margin-top:8px">HISTÓRICO</div><div class="timeline">'+tl+'</div>'
-    +'<div class="modal-actions">'+btnExcluir+'<button class="btn-ghost" onclick="fecharCard()">Fechar</button></div>'
+    +'<div class="modal-actions">'+btnExcluir+btnEditar+'<button class="btn-ghost" onclick="fecharCard()">Fechar</button></div>'
     +'</div></div>';
 }
 
