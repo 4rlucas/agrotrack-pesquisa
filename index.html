@@ -72,6 +72,11 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:1
 .filtro-tab.active{background:var(--accent-light);border-color:var(--accent);color:var(--accent);}
 /* KANBAN */
 .kanban-wrap{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;align-items:start;}
+.kanban-wrap.kanban-5{grid-template-columns:repeat(5,1fr);}
+.desemp-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;}
+.desemp-cell{background:var(--surface2);border-radius:8px;padding:12px;text-align:center;}
+.desemp-val{font-size:20px;font-weight:600;}
+.desemp-lbl{font-size:10px;font-family:var(--mono);color:var(--text3);margin-top:3px;letter-spacing:.5px;}
 .kanban-col{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;}
 .kanban-col-header{padding:13px 15px;font-size:11px;font-family:var(--mono);letter-spacing:1.5px;font-weight:500;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);}
 .kanban-col-header .dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:7px;}
@@ -120,7 +125,8 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:1
 .mobile-topbar{display:none;}
 /* RESPONSIVO */
 @media(max-width:920px){
-  .kanban-wrap{grid-template-columns:1fr;}
+  .kanban-wrap,.kanban-wrap.kanban-5{grid-template-columns:1fr;}
+  .desemp-grid{grid-template-columns:repeat(2,1fr);}
   .cards-grid.cols-4{grid-template-columns:repeat(2,1fr);}
 }
 @media(max-width:760px){
@@ -267,7 +273,7 @@ async function criarDemanda(d, silencioso){
   if(!sb){ showToast('Configure o Supabase'); return; }
   var row = {
     titulo:d.titulo, descricao:d.descricao||'', responsavel:d.responsavel,
-    prioridade:d.prioridade||'media', status:'pendente', quadro:'equipe',
+    prioridade:d.prioridade||'media', status:'pendente', enviada:false,
     prazo:d.prazo||null, criado_por:state.usuario
   };
   var res = await sb.from('demandas').insert(row).select().single();
@@ -288,8 +294,8 @@ async function mudarStatus(id, novo){
 async function enviarParaValidacao(id){
   var dem = state.demandas.find(function(x){return x.id===id;});
   if(!dem)return;
-  await sb.from('demandas').update({quadro:'validacao', validacao:'aguardando', atualizado_em:new Date().toISOString()}).eq('id',id);
-  await logHistorico(id, 'quadro', 'Equipe', 'Aguardando validação');
+  await sb.from('demandas').update({enviada:true, validacao:'aguardando', atualizado_em:new Date().toISOString()}).eq('id',id);
+  await logHistorico(id, 'quadro', 'Concluída', 'Enviada para validação');
   showToast('Enviada para validação');
   await carregarDemandas(); render();
 }
@@ -302,8 +308,8 @@ async function marcarValidacao(id, valor){
 }
 
 async function voltarParaEquipe(id){
-  await sb.from('demandas').update({quadro:'equipe', atualizado_em:new Date().toISOString()}).eq('id',id);
-  await logHistorico(id, 'quadro', 'Validação', 'Equipe');
+  await sb.from('demandas').update({enviada:false, validacao:'aguardando', atualizado_em:new Date().toISOString()}).eq('id',id);
+  await logHistorico(id, 'quadro', 'Validação', 'Concluída');
   showToast('Devolvida ao quadro da equipe');
   await carregarDemandas(); render();
 }
@@ -359,6 +365,7 @@ function navItems(){
   var items=[];
   if(state.role!=='rafael') items.push(['quadro','Demandas']);
   items.push(['validacao','Validação Rafael']);
+  if(state.role==='gestora') items.push(['desempenho','Desempenho da equipe']);
   return items;
 }
 function renderApp(){
@@ -367,7 +374,9 @@ function renderApp(){
   var navHTML=nav.map(function(p){
     return '<div class="nav-item'+(state.pagina===p[0]?' active':'')+'" onclick="irPara(\''+p[0]+'\')">'+p[1]+'</div>';
   }).join('');
-  var content = state.pagina==='validacao' ? renderQuadroValidacao() : renderQuadroEquipe();
+  var content = state.pagina==='validacao' ? renderQuadroValidacao()
+              : state.pagina==='desempenho' ? renderDesempenho()
+              : renderQuadroEquipe();
   return '<div class="app">'
     +'<div class="sidebar">'
       +'<div class="sidebar-logo">Grower Tools<strong>AgroTrack Pesquisa</strong></div>'
@@ -391,8 +400,8 @@ function logout(){ try{ if(_rtChannel){ sb.removeChannel(_rtChannel); _rtChannel
 function renderQuadroEquipe(){
   var isGestora = state.role==='gestora';
   var isFunc = state.role==='funcionaria';
-  // demandas do quadro equipe
-  var demandas = state.demandas.filter(function(d){return d.quadro==='equipe';});
+  // todas as demandas (a coluna "Em validação" separa as enviadas)
+  var demandas = state.demandas.slice();
   // funcionária só vê as dela
   if(isFunc) demandas = demandas.filter(function(d){return d.responsavel===state.usuario;});
 
@@ -434,14 +443,22 @@ function renderQuadroEquipe(){
       +'</div>';
   }
 
-  // kanban
-  var kanban='<div class="kanban-wrap">'+STATUS_ORDEM.map(function(st){
-    var col=filtradas.filter(function(d){return d.status===st;});
+  // kanban: 4 colunas de status + coluna "Em validação" (demandas enviadas)
+  var enviadas = filtradas.filter(function(d){return d.enviada;});
+  var kanbanCols = STATUS_ORDEM.map(function(st){
+    // concluídas que já foram enviadas saem da coluna Concluída (vão pra Em validação)
+    var col=filtradas.filter(function(d){return d.status===st && !d.enviada;});
     var items=col.map(function(d){return cardEquipe(d);}).join('') || '<div class="empty-col">Nenhuma demanda</div>';
     return '<div class="kanban-col">'
       +'<div class="kanban-col-header"><span><span class="dot" style="background:'+STATUS[st].cor+'"></span>'+STATUS[st].label.toUpperCase()+'</span><span>'+col.length+'</span></div>'
       +'<div class="kanban-col-body">'+items+'</div></div>';
-  }).join('')+'</div>';
+  });
+  // coluna Em validação
+  var itemsVal = enviadas.map(function(d){return cardEmValidacao(d);}).join('') || '<div class="empty-col">Nenhuma demanda</div>';
+  kanbanCols.push('<div class="kanban-col">'
+    +'<div class="kanban-col-header"><span><span class="dot" style="background:#a78bfa"></span>EM VALIDAÇÃO</span><span>'+enviadas.length+'</span></div>'
+    +'<div class="kanban-col-body">'+itemsVal+'</div></div>');
+  var kanban='<div class="kanban-wrap kanban-5">'+kanbanCols.join('')+'</div>';
 
   var btnNova = isGestora ? '<button class="btn-save" onclick="abrirModalNova()">+ Nova demanda</button>' : '';
 
@@ -486,11 +503,80 @@ function cardEquipe(d){
     +'</div>';
 }
 
-// ---- QUADRO 2: VALIDAÇÃO ----
+// Card na coluna "Em validação" do quadro da equipe (mostra estado, só leitura pra funcionária)
+function cardEmValidacao(d){
+  var user=u(d.responsavel);
+  var validada = d.validacao==='validada';
+  var badge = validada
+    ? '<span class="valid-badge valid-validada">✓ Validada</span>'
+    : '<span class="valid-badge valid-aguardando">⏳ Aguardando validação</span>';
+  return '<div class="kanban-card" onclick="abrirCard(\''+d.id+'\')">'
+    +'<span class="prio-badge prio-'+d.prioridade+'">'+PRIORIDADES[d.prioridade].toUpperCase()+'</span>'
+    +'<div class="kanban-card-title">'+esc(d.titulo)+'</div>'
+    +'<div style="margin:6px 0 8px">'+badge+'</div>'
+    +'<div class="kanban-card-meta">'
+      +'<span class="kanban-card-autor" style="background:'+user.corBg+';color:'+user.cor+'"><span class="avatar" style="background:'+user.cor+';color:#0f1117">'+iniciais(user.nome)+'</span>'+esc(user.nome)+'</span>'
+    +'</div>'
+    +'</div>';
+}
+// ---- ABA: DESEMPENHO DA EQUIPE (só gestora) ----
+function renderDesempenho(){
+  var fs=funcionarias();
+  var linhas = fs.map(function(f){
+    var todas = state.demandas.filter(function(d){return d.responsavel===f;});
+    var total = todas.length;
+    var concluidas = todas.filter(function(d){return d.status==='concluida';}).length;
+    var andamento = todas.filter(function(d){return d.status==='em_andamento';}).length;
+    var pendentes = todas.filter(function(d){return d.status==='pendente';}).length;
+    var pausa = todas.filter(function(d){return d.status==='em_pausa';}).length;
+    var pct = total ? Math.round(concluidas/total*100) : 0;
+    return {login:f, total:total, concluidas:concluidas, andamento:andamento, pendentes:pendentes, pausa:pausa, pct:pct};
+  });
+
+  var gTotal = linhas.reduce(function(a,l){return a+l.total;},0);
+  var gConcl = linhas.reduce(function(a,l){return a+l.concluidas;},0);
+  var gPct = gTotal ? Math.round(gConcl/gTotal*100) : 0;
+
+  var kpis='<div class="cards-grid cols-4">'
+    +metric('EQUIPE', fs.length, 'pessoas', 'var(--text)')
+    +metric('DEMANDAS', gTotal, 'no total', 'var(--text)')
+    +metric('CONCLUÍDAS', gConcl, 'da equipe', 'var(--accent)')
+    +'<div class="card"><div class="metric-label">CONCLUSÃO GERAL</div><div class="metric-value">'+gPct+'%</div><div class="progress-track"><div class="progress-fill" style="width:'+gPct+'%"></div></div></div>'
+    +'</div>';
+
+  var cards = linhas.map(function(l){
+    var us=u(l.login);
+    var corPct = l.pct>=70?'var(--accent)':l.pct>=40?'var(--warn)':'var(--text2)';
+    return '<div class="card" style="margin-bottom:12px">'
+      +'<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">'
+        +'<span class="avatar" style="width:32px;height:32px;font-size:12px;background:'+us.cor+';color:#0f1117">'+iniciais(us.nome)+'</span>'
+        +'<div><div style="font-size:15px;font-weight:500;color:'+us.cor+'">'+esc(us.nome)+'</div>'
+        +'<div style="font-size:11px;font-family:var(--mono);color:var(--text3)">'+l.total+' demanda'+(l.total===1?'':'s')+'</div></div>'
+        +'<div style="margin-left:auto;text-align:right"><div style="font-size:22px;font-weight:600;color:'+corPct+'">'+l.pct+'%</div><div style="font-size:10px;font-family:var(--mono);color:var(--text3)">conclusão</div></div>'
+      +'</div>'
+      +'<div class="progress-track" style="margin-bottom:14px"><div class="progress-fill" style="width:'+l.pct+'%"></div></div>'
+      +'<div class="desemp-grid">'
+        +desempCell('Concluídas', l.concluidas, 'var(--accent)')
+        +desempCell('Em andamento', l.andamento, 'var(--blue)')
+        +desempCell('Pendentes', l.pendentes, 'var(--text2)')
+        +desempCell('Em pausa', l.pausa, 'var(--warn)')
+      +'</div>'
+      +'</div>';
+  }).join('');
+
+  return '<div class="page">'
+    +'<div class="page-header"><div class="page-title">Desempenho da equipe</div><div class="page-sub">Acompanhamento por funcionária</div></div>'
+    +kpis+cards
+    +'</div>';
+}
+function desempCell(label,val,cor){
+  return '<div class="desemp-cell"><div class="desemp-val" style="color:'+cor+'">'+val+'</div><div class="desemp-lbl">'+label+'</div></div>';
+}
+
 function renderQuadroValidacao(){
   var isGestora=state.role==='gestora';
   var isRafael=state.role==='rafael';
-  var demandas=state.demandas.filter(function(d){return d.quadro==='validacao';});
+  var demandas=state.demandas.filter(function(d){return d.enviada;});
 
   var aguardando=demandas.filter(function(d){return d.validacao==='aguardando';});
   var validadas=demandas.filter(function(d){return d.validacao==='validada';});
@@ -670,9 +756,10 @@ function renderModalCard(){
     return '<div class="tl-item"><div class="tl-dot"></div><div><div class="tl-text">'+esc(txt)+'</div><div class="tl-time">'+fmtDataHora(h.em)+' · '+esc(u(h.autor).nome)+'</div></div></div>';
   }).join('') || '<div class="tl-text" style="font-size:12px;color:var(--text3)">Sem histórico ainda.</div>';
 
-  var statusInfo = d.quadro==='validacao'
-    ? '<span class="valid-badge valid-'+d.validacao+'">'+(d.validacao==='validada'?'✓ Validada':'⏳ Aguardando validação')+'</span>'
-    : '<span class="prio-badge" style="background:rgba(255,255,255,.06);color:'+STATUS[d.status].cor+'">'+STATUS[d.status].label+'</span>';
+  var statusInfo = '<span class="prio-badge" style="background:rgba(255,255,255,.06);color:'+STATUS[d.status].cor+'">'+STATUS[d.status].label+'</span>';
+  if(d.enviada){
+    statusInfo += ' <span class="valid-badge valid-'+d.validacao+'">'+(d.validacao==='validada'?'✓ Validada':'⏳ Aguardando validação')+'</span>';
+  }
 
   var btnExcluir = isGestora ? '<button class="btn-danger" onclick="excluirDemanda(\''+d.id+'\')">Excluir</button>' : '';
 
