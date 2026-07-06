@@ -215,6 +215,32 @@ async function carregarDemandas(){
   }catch(e){ console.warn(e); showToast('Erro ao carregar'); }
 }
 
+// Recarrega dados vindos de outra janela/pessoa.
+// Só re-renderiza se NÃO houver modal aberto, pra não apagar o que a pessoa digita.
+var _rtChannel=null;
+async function recarregarSilencioso(){
+  if(state.tela!=='app') return;
+  await carregarDemandas();
+  var modalAberto = state.modalNova || state.cardAberto;
+  if(!modalAberto){ render(); }
+}
+
+function iniciarRealtime(){
+  if(!sb) return;
+  try{
+    if(_rtChannel){ sb.removeChannel(_rtChannel); }
+    _rtChannel = sb.channel('agrotrack-pesquisa-rt')
+      .on('postgres_changes', {event:'*', schema:'public', table:'demandas'}, function(){ recarregarSilencioso(); })
+      .on('postgres_changes', {event:'*', schema:'public', table:'demanda_historico'}, function(){ recarregarSilencioso(); })
+      .subscribe();
+  }catch(e){ console.warn('realtime',e); }
+}
+
+// Rede de segurança: ao voltar o foco na aba, recarrega (caso o realtime caia).
+document.addEventListener('visibilitychange', function(){
+  if(document.visibilityState==='visible') recarregarSilencioso();
+});
+
 async function logHistorico(demandaId, tipo, de, para){
   if(!sb)return;
   try{ await sb.from('demanda_historico').insert({demanda_id:demandaId, tipo:tipo, de:de, para:para, autor:state.usuario}); }
@@ -308,7 +334,7 @@ function bindLogin(){
     state.usuario=login; state.role=d.role; state.tela='app';
     state.pagina = d.role==='rafael' ? 'validacao' : 'quadro';
     document.getElementById('root').innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px"><div style="font-size:18px;font-weight:600;color:#4ade80">AgroTrack Pesquisa</div><div style="font-size:13px;font-family:monospace;color:#555a75">Carregando...</div></div>';
-    await carregarDemandas(); render();
+    await carregarDemandas(); iniciarRealtime(); render();
   };
   document.getElementById('l-senha').onkeydown=function(e){ if(e.key==='Enter')document.getElementById('l-btn').click(); };
 }
@@ -344,7 +370,7 @@ function renderApp(){
 function roleLabel(r){ return r==='gestora'?'Gestora':r==='rafael'?'Validação':'Equipe de Pesquisa'; }
 
 function irPara(p){ state.pagina=p; state.cardAberto=null; render(); }
-function logout(){ state.tela='login'; state.usuario=null; state.role=null; state.cardAberto=null; render(); }
+function logout(){ try{ if(_rtChannel){ sb.removeChannel(_rtChannel); _rtChannel=null; } }catch(e){} state.tela='login'; state.usuario=null; state.role=null; state.cardAberto=null; render(); }
 
 // ---- QUADRO 1: EQUIPE ----
 function renderQuadroEquipe(){
