@@ -136,6 +136,22 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:1
   .modal-actions button{width:100%;}
 }
 input[type=text],input[type=password],input[type=date],select,textarea{background:var(--surface2)!important;color:var(--text)!important;}
+/* DROPDOWN RESPONSAVEIS */
+.dd-wrap{position:relative;}
+.dd-toggle{width:100%;padding:11px 13px;border:1px solid var(--border2);border-radius:8px;background:var(--surface2);color:var(--text);font-family:var(--sans);font-size:14px;display:flex;justify-content:space-between;align-items:center;cursor:pointer;gap:8px;}
+.dd-toggle.open{border-color:var(--accent);border-radius:8px 8px 0 0;}
+.dd-toggle span.dd-val{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.dd-toggle .dd-arrow{color:var(--text2);flex-shrink:0;transition:transform .15s;}
+.dd-toggle.open .dd-arrow{transform:rotate(180deg);color:var(--accent);}
+.dd-list{border:1px solid var(--accent);border-top:none;border-radius:0 0 8px 8px;background:var(--surface);overflow:hidden;}
+.dd-opt{display:flex;align-items:center;gap:9px;padding:10px 13px;cursor:pointer;}
+.dd-opt:hover{background:var(--surface2);}
+.dd-opt.divider{border-bottom:1px solid var(--border);}
+.dd-check{width:17px;height:17px;border-radius:5px;border:1px solid var(--border2);background:transparent;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:11px;color:#0f1117;}
+.dd-opt.on .dd-check{background:var(--accent);border-color:var(--accent);}
+.dd-opt-avatar{width:21px;height:21px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;color:#0f1117;flex-shrink:0;}
+.dd-opt-nome{font-size:13px;color:var(--text);}
+.dd-opt.todos .dd-opt-nome{color:var(--accent);font-weight:500;}
 </style>
 </head>
 <body>
@@ -247,7 +263,7 @@ async function logHistorico(demandaId, tipo, de, para){
   catch(e){ console.warn('hist',e); }
 }
 
-async function criarDemanda(d){
+async function criarDemanda(d, silencioso){
   if(!sb){ showToast('Configure o Supabase'); return; }
   var row = {
     titulo:d.titulo, descricao:d.descricao||'', responsavel:d.responsavel,
@@ -257,8 +273,7 @@ async function criarDemanda(d){
   var res = await sb.from('demandas').insert(row).select().single();
   if(res.error){ showToast('Erro ao criar'); console.warn(res.error); return; }
   await logHistorico(res.data.id, 'criada', null, 'pendente');
-  showToast('Demanda criada');
-  await carregarDemandas(); render();
+  if(!silencioso){ showToast('Demanda criada'); await carregarDemandas(); render(); }
 }
 
 async function mudarStatus(id, novo){
@@ -538,34 +553,104 @@ function metric(label,val,sub,cor){
 }
 
 // ---- MODAL NOVA DEMANDA ----
-function abrirModalNova(){ state.modalNova=true; state.modalData={prioridade:'media',responsavel:funcionarias()[0]||''}; render(); }
+function abrirModalNova(){ state.modalNova=true; state.modalData={prioridade:'media',responsaveis:[],ddAberto:false}; render(); }
 function fecharModalNova(){ state.modalNova=false; render(); }
+
+// resumo do dropdown fechado: vazio->"Equipe" | todos->"Todos" | parcial->nomes
+function resumoResponsaveis(){
+  var sel=state.modalData.responsaveis||[];
+  var fs=funcionarias();
+  if(sel.length===0) return 'Equipe';
+  if(sel.length===fs.length) return 'Todos';
+  return sel.map(function(f){return u(f).nome;}).join(', ');
+}
+function toggleDropdownResp(){ _capturarCamposModal(); state.modalData.ddAberto=!state.modalData.ddAberto; render(); }
+function toggleResp(login){
+  _capturarCamposModal();
+  var sel=state.modalData.responsaveis||[];
+  var i=sel.indexOf(login);
+  if(i>=0) sel.splice(i,1); else sel.push(login);
+  state.modalData.responsaveis=sel;
+  render();
+}
+function toggleTodos(){
+  _capturarCamposModal();
+  var fs=funcionarias();
+  var sel=state.modalData.responsaveis||[];
+  state.modalData.responsaveis = (sel.length===fs.length) ? [] : fs.slice();
+  render();
+}
+
 function renderModalNova(){
   var d=state.modalData;
-  var respOpts=funcionarias().map(function(f){return'<option value="'+f+'"'+(d.responsavel===f?' selected':'')+'>'+esc(u(f).nome)+'</option>';}).join('');
+  var sel=d.responsaveis||[];
+  var fs=funcionarias();
+  var todosMarcados = fs.length>0 && sel.length===fs.length;
   var prioOpts=Object.keys(PRIORIDADES).map(function(p){return'<option value="'+p+'"'+(d.prioridade===p?' selected':'')+'>'+PRIORIDADES[p]+'</option>';}).join('');
+
+  // dropdown de responsáveis
+  var ddList='';
+  if(d.ddAberto){
+    var optTodos='<div class="dd-opt todos divider'+(todosMarcados?' on':'')+'" onclick="toggleTodos()">'
+      +'<span class="dd-check">'+(todosMarcados?'✓':'')+'</span>'
+      +'<span class="dd-opt-nome">Todos</span></div>';
+    var opts=fs.map(function(f){
+      var on=sel.indexOf(f)>=0;
+      var us=u(f);
+      return '<div class="dd-opt'+(on?' on':'')+'" onclick="toggleResp(\''+f+'\')">'
+        +'<span class="dd-check">'+(on?'✓':'')+'</span>'
+        +'<span class="dd-opt-avatar" style="background:'+us.cor+'">'+iniciais(us.nome)+'</span>'
+        +'<span class="dd-opt-nome">'+esc(us.nome)+'</span></div>';
+    }).join('');
+    ddList='<div class="dd-list">'+optTodos+opts+'</div>';
+  }
+  var dropdown='<div class="dd-wrap">'
+    +'<div class="dd-toggle'+(d.ddAberto?' open':'')+'" onclick="toggleDropdownResp()">'
+    +'<span class="dd-val">'+esc(resumoResponsaveis())+'</span>'
+    +'<span class="dd-arrow">▾</span></div>'
+    +ddList+'</div>';
+
+  var nBtn = sel.length>1 ? ('Criar '+sel.length+' demandas') : 'Criar demanda';
+
   return '<div class="modal-overlay" onclick="if(event.target===this)fecharModalNova()"><div class="modal">'
     +'<div class="modal-title">Nova demanda</div>'
     +'<div class="modal-field"><label>TÍTULO</label><input type="text" id="m-titulo" placeholder="Ex: Análise foliar lote soja" value="'+esc(d.titulo||'')+'"></div>'
-    +'<div class="modal-field"><label>RESPONSÁVEL</label><select id="m-resp">'+respOpts+'</select></div>'
+    +'<div class="modal-field"><label>RESPONSÁVEIS</label>'+dropdown+'</div>'
     +'<div class="modal-field"><label>PRIORIDADE</label><select id="m-prio">'+prioOpts+'</select></div>'
     +'<div class="modal-field"><label>PRAZO</label><input type="date" id="m-prazo" value="'+esc(d.prazo||'')+'"></div>'
     +'<div class="modal-field"><label>DESCRIÇÃO</label><textarea id="m-desc" placeholder="Detalhes da demanda...">'+esc(d.descricao||'')+'</textarea></div>'
-    +'<div class="modal-actions"><button class="btn-ghost" onclick="fecharModalNova()">Cancelar</button><button class="btn-save" onclick="salvarNova()">Criar demanda</button></div>'
+    +'<div class="modal-actions"><button class="btn-ghost" onclick="fecharModalNova()">Cancelar</button><button class="btn-save" onclick="salvarNova()">'+nBtn+'</button></div>'
     +'</div></div>';
 }
+
+// preserva os campos digitados antes de re-renderizar (o dropdown re-renderiza a cada clique)
+function _capturarCamposModal(){
+  var t=document.getElementById('m-titulo'); if(t)state.modalData.titulo=t.value;
+  var p=document.getElementById('m-prio'); if(p)state.modalData.prioridade=p.value;
+  var pz=document.getElementById('m-prazo'); if(pz)state.modalData.prazo=pz.value;
+  var ds=document.getElementById('m-desc'); if(ds)state.modalData.descricao=ds.value;
+}
+
 async function salvarNova(){
-  var titulo=document.getElementById('m-titulo').value.trim();
+  _capturarCamposModal();
+  var titulo=(state.modalData.titulo||'').trim();
   if(!titulo){ showToast('Informe o título'); return; }
-  var d={
+  var sel=state.modalData.responsaveis||[];
+  if(sel.length===0){ showToast('Selecione ao menos um responsável'); return; }
+  var base={
     titulo:titulo,
-    responsavel:document.getElementById('m-resp').value,
-    prioridade:document.getElementById('m-prio').value,
-    prazo:document.getElementById('m-prazo').value||null,
-    descricao:document.getElementById('m-desc').value.trim(),
+    prioridade:state.modalData.prioridade||'media',
+    prazo:state.modalData.prazo||null,
+    descricao:(state.modalData.descricao||'').trim(),
   };
   state.modalNova=false;
-  await criarDemanda(d);
+  showToast(sel.length>1?('Criando '+sel.length+' demandas...'):'Criando demanda...');
+  // cria uma demanda separada por responsável (cópias independentes)
+  for(var i=0;i<sel.length;i++){
+    var d=Object.assign({},base,{responsavel:sel[i]});
+    await criarDemanda(d, true);
+  }
+  await carregarDemandas(); render();
 }
 
 // ---- MODAL DETALHE / TIMELINE ----
