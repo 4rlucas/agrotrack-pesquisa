@@ -97,11 +97,13 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:1
 .valid-badge{font-size:10px;font-family:var(--mono);padding:3px 9px;border-radius:5px;font-weight:500;}
 .valid-aguardando{background:rgba(251,191,36,.12);color:#fbbf24;}
 .valid-validada{background:rgba(74,222,128,.15);color:#4ade80;}
+.valid-rafael{background:rgba(192,132,252,.15);color:#c084fc;}
 /* BOTÕES DE AÇÃO NO CARD */
 .card-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;}
 .mini-btn{font-size:10px;font-family:var(--mono);padding:5px 9px;border-radius:6px;border:1px solid var(--border2);background:var(--surface3);color:var(--text2);cursor:pointer;}
 .mini-btn:hover{border-color:var(--accent);color:var(--text);}
 .mini-btn.go{border-color:rgba(74,222,128,.4);color:var(--accent);}
+.mini-btn.val-rafael{border-color:rgba(192,132,252,.4);color:#c084fc;}
 /* MODAL */
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:100;padding:20px;}
 .modal{background:var(--surface);border:1px solid var(--border2);border-radius:16px;padding:26px;width:100%;max-width:460px;max-height:88vh;overflow-y:auto;}
@@ -279,6 +281,7 @@ async function criarDemanda(d, silencioso){
   var row = {
     titulo:d.titulo, descricao:d.descricao||'', responsavel:d.responsavel,
     prioridade:d.prioridade||'media', status:'pendente', enviada:false,
+    para_gestora: d.para_gestora||false,
     prazo:d.prazo||null, criado_por:state.usuario
   };
   var res = await sb.from('demandas').insert(row).select().single();
@@ -305,10 +308,17 @@ async function enviarParaValidacao(id){
   await carregarDemandas(); render();
 }
 
-async function marcarValidacao(id, valor){
-  await sb.from('demandas').update({validacao:valor, atualizado_em:new Date().toISOString()}).eq('id',id);
-  await logHistorico(id, 'validacao', valor==='validada'?'Aguardando':'Validada', valor==='validada'?'Validada':'Aguardando');
-  showToast(valor==='validada'?'Marcada como validada':'Reaberta');
+async function marcarValidacao(id, validador){
+  // validador: 'ludmila' | 'rafael' | 'aguardando' (reabrir)
+  var nomes={ludmila:'Ludmila', rafael:'Rafael'};
+  await sb.from('demandas').update({validacao:validador, atualizado_em:new Date().toISOString()}).eq('id',id);
+  if(validador==='aguardando'){
+    await logHistorico(id, 'validacao', null, 'Reaberta');
+    showToast('Reaberta');
+  }else{
+    await logHistorico(id, 'validacao', null, 'Validada por '+nomes[validador]);
+    showToast('Validada por '+nomes[validador]);
+  }
   await carregarDemandas(); render();
 }
 
@@ -369,7 +379,8 @@ function bindLogin(){
 function navItems(){
   var items=[];
   if(state.role!=='rafael') items.push(['quadro','Demandas']);
-  items.push(['validacao','Validação Rafael']);
+  if(state.role==='gestora'||state.role==='rafael') items.push(['gestora','Demandas Gestora']);
+  if(state.role==='gestora'||state.role==='rafael') items.push(['validacao','Validação Ludmila']);
   if(state.role==='gestora') items.push(['desempenho','Desempenho da equipe']);
   return items;
 }
@@ -381,6 +392,7 @@ function renderApp(){
   }).join('');
   var content = state.pagina==='validacao' ? renderQuadroValidacao()
               : state.pagina==='desempenho' ? renderDesempenho()
+              : state.pagina==='gestora' ? renderQuadroGestora()
               : renderQuadroEquipe();
   return '<div class="app">'
     +'<div class="sidebar">'
@@ -406,8 +418,8 @@ function logout(){ try{ if(_rtChannel){ sb.removeChannel(_rtChannel); _rtChannel
 function renderQuadroEquipe(){
   var isGestora = state.role==='gestora';
   var isFunc = state.role==='funcionaria';
-  // todas as demandas (a coluna "Em validação" separa as enviadas)
-  var demandas = state.demandas.slice();
+  // demandas da equipe (exclui as que são da gestora — essas vão pra aba Demandas Gestora)
+  var demandas = state.demandas.filter(function(d){return !d.para_gestora;});
   // funcionária só vê as dela
   if(isFunc) demandas = demandas.filter(function(d){return d.responsavel===state.usuario;});
 
@@ -466,7 +478,7 @@ function renderQuadroEquipe(){
     +'<div class="kanban-col-body">'+itemsVal+'</div></div>');
   var kanban='<div class="kanban-wrap kanban-5">'+kanbanCols.join('')+'</div>';
 
-  var btnNova = isGestora ? '<button class="btn-save" onclick="abrirModalNova()">+ Nova demanda</button>' : '';
+  var btnNova = (isGestora||isFunc) ? '<button class="btn-save" onclick="abrirModalNova()">+ Nova demanda</button>' : '';
 
   return '<div class="page">'
     +'<div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">'
@@ -509,13 +521,75 @@ function cardEquipe(d){
     +'</div>';
 }
 
+// ---- ABA: DEMANDAS GESTORA (gestora e Rafael) ----
+function renderQuadroGestora(){
+  var isGestora = state.role==='gestora';
+  var demandas = state.demandas.filter(function(d){return d.para_gestora;});
+
+  var total=demandas.length;
+  var concl=demandas.filter(function(d){return d.status==='concluida';}).length;
+  var andam=demandas.filter(function(d){return d.status==='em_andamento';}).length;
+  var pct = total? Math.round(concl/total*100) : 0;
+
+  var kpis='<div class="cards-grid cols-4">'
+    +metric('TOTAL', total, 'demandas', 'var(--text)')
+    +metric('CONCLUÍDAS', concl, 'finalizadas', 'var(--accent)')
+    +metric('EM ANDAMENTO', andam, 'em execução', 'var(--blue)')
+    +'<div class="card"><div class="metric-label">PROGRESSO</div><div class="metric-value">'+pct+'%</div><div class="progress-track"><div class="progress-fill" style="width:'+pct+'%"></div></div></div>'
+    +'</div>';
+
+  var kanban='<div class="kanban-wrap">'+STATUS_ORDEM.map(function(st){
+    var col=demandas.filter(function(d){return d.status===st;});
+    var items=col.map(function(d){return cardGestora(d);}).join('') || '<div class="empty-col">Nenhuma demanda</div>';
+    return '<div class="kanban-col">'
+      +'<div class="kanban-col-header"><span><span class="dot" style="background:'+STATUS[st].cor+'"></span>'+STATUS[st].label.toUpperCase()+'</span><span>'+col.length+'</span></div>'
+      +'<div class="kanban-col-body">'+items+'</div></div>';
+  }).join('')+'</div>';
+
+  // só a gestora cria demanda pra si mesma nesta aba
+  var btnNova = isGestora ? '<button class="btn-save" onclick="abrirModalNova(true)">+ Nova demanda</button>' : '';
+
+  return '<div class="page">'
+    +'<div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">'
+      +'<div><div class="page-title">Demandas Gestora</div><div class="page-sub">Demandas atribuídas à gestora · '+total+' no total</div></div>'
+      +btnNova
+    +'</div>'
+    +kpis+kanban
+    +'</div>';
+}
+
+function cardGestora(d){
+  var isGestora=state.role==='gestora';
+  var criador = d.criado_por ? u(d.criado_por).nome : '—';
+  // gestora mexe no status; Rafael só visualiza
+  var acoes='';
+  if(isGestora){
+    var btns=[];
+    STATUS_ORDEM.forEach(function(s){
+      if(s!==d.status) btns.push('<button class="mini-btn" onclick="event.stopPropagation();mudarStatus(\''+d.id+'\',\''+s+'\')">'+STATUS[s].label+'</button>');
+    });
+    acoes='<div class="card-actions">'+btns.join('')+'</div>';
+  }
+  var prazo = d.prazo ? '<span style="color:var(--text3)">📅 '+fmtData(d.prazo)+'</span>' : '';
+  return '<div class="kanban-card" onclick="abrirCard(\''+d.id+'\')">'
+    +'<span class="prio-badge prio-'+d.prioridade+'">'+PRIORIDADES[d.prioridade].toUpperCase()+'</span>'
+    +'<div class="kanban-card-title">'+esc(d.titulo)+'</div>'
+    +'<div class="kanban-card-meta"><span style="color:var(--text3)">criada por '+esc(criador)+'</span>'+prazo+'</div>'
+    +acoes
+    +'</div>';
+}
+
 // Card na coluna "Em validação" do quadro da equipe (mostra estado, só leitura pra funcionária)
 function cardEmValidacao(d){
   var user=u(d.responsavel);
-  var validada = d.validacao==='validada';
-  var badge = validada
-    ? '<span class="valid-badge valid-validada">✓ Validada</span>'
-    : '<span class="valid-badge valid-aguardando">⏳ Aguardando validação</span>';
+  var badge;
+  if(d.validacao==='ludmila'){
+    badge='<span class="valid-badge valid-validada">✓ Validada pela Ludmila</span>';
+  }else if(d.validacao==='rafael'){
+    badge='<span class="valid-badge valid-rafael">✓ Validada pelo Rafael</span>';
+  }else{
+    badge='<span class="valid-badge valid-aguardando">⏳ Aguardando validação</span>';
+  }
   return '<div class="kanban-card" onclick="abrirCard(\''+d.id+'\')">'
     +'<span class="prio-badge prio-'+d.prioridade+'">'+PRIORIDADES[d.prioridade].toUpperCase()+'</span>'
     +'<div class="kanban-card-title">'+esc(d.titulo)+'</div>'
@@ -585,57 +659,68 @@ function renderQuadroValidacao(){
   var demandas=state.demandas.filter(function(d){return d.enviada;});
 
   var aguardando=demandas.filter(function(d){return d.validacao==='aguardando';});
-  var validadas=demandas.filter(function(d){return d.validacao==='validada';});
+  var valLudmila=demandas.filter(function(d){return d.validacao==='ludmila';});
+  var valRafael=demandas.filter(function(d){return d.validacao==='rafael';});
 
   var kpis='<div class="cards-grid cols-4">'
     +metric('NA VALIDAÇÃO', demandas.length, 'demandas', 'var(--text)')
-    +metric('AGUARDANDO', aguardando.length, 'Rafael validar', 'var(--warn)')
-    +metric('VALIDADAS', validadas.length, 'aprovadas', 'var(--accent)')
-    +'<div class="card"><div class="metric-label">TAXA</div><div class="metric-value">'+(demandas.length?Math.round(validadas.length/demandas.length*100):0)+'%</div><div class="metric-sub">validadas</div></div>'
+    +metric('AGUARDANDO', aguardando.length, 'a validar', 'var(--warn)')
+    +metric('LUDMILA', valLudmila.length, 'validadas', 'var(--accent)')
+    +metric('RAFAEL', valRafael.length, 'validadas', 'var(--purple)')
     +'</div>';
 
-  function coluna(titulo, cor, lista, valor){
+  function coluna(titulo, cor, lista){
     var items=lista.map(function(d){return cardValidacao(d,isGestora,isRafael);}).join('') || '<div class="empty-col">Nenhuma demanda</div>';
     return '<div class="kanban-col">'
       +'<div class="kanban-col-header"><span><span class="dot" style="background:'+cor+'"></span>'+titulo+'</span><span>'+lista.length+'</span></div>'
       +'<div class="kanban-col-body">'+items+'</div></div>';
   }
-  var kanban='<div class="kanban-wrap" style="grid-template-columns:repeat(2,1fr)">'
+  var kanban='<div class="kanban-wrap" style="grid-template-columns:repeat(3,1fr)">'
     +coluna('AGUARDANDO VALIDAÇÃO','#fbbf24',aguardando)
-    +coluna('VALIDADA','#4ade80',validadas)
+    +coluna('VALIDADA LUDMILA','#4ade80',valLudmila)
+    +coluna('VALIDADA RAFAEL','#c084fc',valRafael)
     +'</div>';
 
-  var hint = isRafael ? 'Marque as demandas que você validou' : (isGestora?'Você move as concluídas para cá pelo quadro da equipe':'Somente visualização');
-
   return '<div class="page">'
-    +'<div class="page-header"><div class="page-title">Aguardando Retorno Rafael</div><div class="page-sub">'+hint+'</div></div>'
+    +'<div class="page-header"><div class="page-title">Validação Ludmila</div><div class="page-sub">Ludmila e Rafael validam as demandas concluídas</div></div>'
     +kpis+kanban
     +'</div>';
 }
 
 function cardValidacao(d,isGestora,isRafael){
   var user=u(d.responsavel);
-  var badge='<span class="valid-badge valid-'+d.validacao+'">'+(d.validacao==='validada'?'✓ Validada':'⏳ Aguardando')+'</span>';
+  var podeValidar = isGestora || isRafael;
   var acoes='';
-  // Gestora e Rafael podem marcar validação
-  if(isGestora||isRafael){
-    if(d.validacao==='aguardando'){
-      acoes='<div class="card-actions"><button class="mini-btn go" onclick="event.stopPropagation();marcarValidacao(\''+d.id+'\',\'validada\')">✓ Marcar validada</button></div>';
-    }else{
-      acoes='<div class="card-actions"><button class="mini-btn" onclick="event.stopPropagation();marcarValidacao(\''+d.id+'\',\'aguardando\')">↩ Reabrir</button></div>';
+  if(d.validacao==='aguardando'){
+    // dois botões: quem valida escolhe na hora
+    if(podeValidar){
+      acoes='<div class="card-actions">'
+        +'<button class="mini-btn go" onclick="event.stopPropagation();marcarValidacao(\''+d.id+'\',\'ludmila\')">✓ Ludmila</button>'
+        +'<button class="mini-btn val-rafael" onclick="event.stopPropagation();marcarValidacao(\''+d.id+'\',\'rafael\')">✓ Rafael</button>'
+        +'</div>';
+    }
+  }else{
+    // já validada — mostra selo e botão reabrir
+    var selo = d.validacao==='ludmila'
+      ? '<span class="valid-badge valid-validada">✓ Validada Ludmila</span>'
+      : '<span class="valid-badge valid-rafael">✓ Validada Rafael</span>';
+    acoes='<div style="margin-top:8px">'+selo+'</div>';
+    if(podeValidar){
+      acoes+='<div class="card-actions"><button class="mini-btn" onclick="event.stopPropagation();marcarValidacao(\''+d.id+'\',\'aguardando\')">↩ Reabrir</button>'
+        +(isGestora?'<button class="mini-btn" onclick="event.stopPropagation();voltarParaEquipe(\''+d.id+'\')">← Voltar p/ equipe</button>':'')
+        +'</div>';
     }
   }
-  // Gestora pode devolver pra equipe
-  var devolver = isGestora ? '<button class="mini-btn" onclick="event.stopPropagation();voltarParaEquipe(\''+d.id+'\')">← Voltar p/ equipe</button>' : '';
+  // devolver pra equipe também quando aguardando (só gestora)
+  var devolverAguardando = (d.validacao==='aguardando' && isGestora)
+    ? '<div class="card-actions"><button class="mini-btn" onclick="event.stopPropagation();voltarParaEquipe(\''+d.id+'\')">← Voltar p/ equipe</button></div>' : '';
+
   return '<div class="kanban-card" onclick="abrirCard(\''+d.id+'\')">'
-    +'<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap">'
-      +'<span class="prio-badge prio-'+d.prioridade+'">'+PRIORIDADES[d.prioridade].toUpperCase()+'</span>'+badge
-    +'</div>'
+    +'<span class="prio-badge prio-'+d.prioridade+'">'+PRIORIDADES[d.prioridade].toUpperCase()+'</span>'
     +'<div class="kanban-card-title">'+esc(d.titulo)+'</div>'
     +(d.descricao?'<div style="font-size:12px;color:var(--text2);margin-bottom:8px;line-height:1.4">'+esc(d.descricao.slice(0,90))+(d.descricao.length>90?'…':'')+'</div>':'')
     +'<div class="kanban-card-meta"><span class="kanban-card-autor" style="background:'+user.corBg+';color:'+user.cor+'"><span class="avatar" style="background:'+user.cor+';color:#0f1117">'+iniciais(user.nome)+'</span>'+esc(user.nome)+'</span></div>'
-    +acoes
-    +(devolver?'<div class="card-actions">'+devolver+'</div>':'')
+    +acoes+devolverAguardando
     +'</div>';
 }
 
@@ -645,16 +730,28 @@ function metric(label,val,sub,cor){
 }
 
 // ---- MODAL NOVA DEMANDA ----
-function abrirModalNova(){ state.modalNova=true; state.modalData={prioridade:'media',responsaveis:[],ddAberto:false}; render(); }
+// soGestora=true (chamada da aba Demandas Gestora): já vem com a gestora marcada e travada
+function abrirModalNova(soGestora){
+  state.modalNova=true;
+  state.modalData={prioridade:'media', responsaveis: soGestora?['__gestora__']:[], ddAberto:false, soGestora:!!soGestora};
+  render();
+}
 function fecharModalNova(){ state.modalNova=false; render(); }
 
-// resumo do dropdown fechado: vazio->"Equipe" | todos->"Todos" | parcial->nomes
+// lista de opções do dropdown: funcionárias + a gestora (rótulo especial __gestora__)
+function opcoesResponsaveis(){
+  return funcionarias().concat(['__gestora__']);
+}
+function nomeResp(login){ return login==='__gestora__' ? 'Gestora' : u(login).nome; }
+
+// resumo do dropdown fechado: vazio->"Equipe" | todas as funcionárias->"Todos" | senão nomes
 function resumoResponsaveis(){
   var sel=state.modalData.responsaveis||[];
   var fs=funcionarias();
   if(sel.length===0) return 'Equipe';
-  if(sel.length===fs.length) return 'Todos';
-  return sel.map(function(f){return u(f).nome;}).join(', ');
+  var soFunc = sel.filter(function(x){return x!=='__gestora__';});
+  if(soFunc.length===fs.length && sel.indexOf('__gestora__')<0) return 'Todos';
+  return sel.map(function(f){return nomeResp(f);}).join(', ');
 }
 function toggleDropdownResp(){ _capturarCamposModal(); state.modalData.ddAberto=!state.modalData.ddAberto; render(); }
 function toggleResp(login){
@@ -669,7 +766,14 @@ function toggleTodos(){
   _capturarCamposModal();
   var fs=funcionarias();
   var sel=state.modalData.responsaveis||[];
-  state.modalData.responsaveis = (sel.length===fs.length) ? [] : fs.slice();
+  var soFunc = sel.filter(function(x){return x!=='__gestora__';});
+  var temGestora = sel.indexOf('__gestora__')>=0;
+  // "Todos" marca/desmarca só as funcionárias, preserva a gestora
+  if(soFunc.length===fs.length){
+    state.modalData.responsaveis = temGestora?['__gestora__']:[];
+  }else{
+    state.modalData.responsaveis = temGestora ? fs.concat(['__gestora__']) : fs.slice();
+  }
   render();
 }
 
@@ -677,22 +781,28 @@ function renderModalNova(){
   var d=state.modalData;
   var sel=d.responsaveis||[];
   var fs=funcionarias();
-  var todosMarcados = fs.length>0 && sel.length===fs.length;
+  var soFunc = sel.filter(function(x){return x!=='__gestora__';});
+  var todosMarcados = fs.length>0 && soFunc.length===fs.length;
   var prioOpts=Object.keys(PRIORIDADES).map(function(p){return'<option value="'+p+'"'+(d.prioridade===p?' selected':'')+'>'+PRIORIDADES[p]+'</option>';}).join('');
 
   // dropdown de responsáveis
   var ddList='';
   if(d.ddAberto){
-    var optTodos='<div class="dd-opt todos divider'+(todosMarcados?' on':'')+'" onclick="toggleTodos()">'
+    var optTodos = d.soGestora ? '' : ('<div class="dd-opt todos divider'+(todosMarcados?' on':'')+'" onclick="toggleTodos()">'
       +'<span class="dd-check">'+(todosMarcados?'✓':'')+'</span>'
-      +'<span class="dd-opt-nome">Todos</span></div>';
-    var opts=fs.map(function(f){
+      +'<span class="dd-opt-nome">Todos</span></div>');
+    // se for da aba gestora, só mostra a opção Gestora
+    var lista = d.soGestora ? ['__gestora__'] : opcoesResponsaveis();
+    var opts=lista.map(function(f){
       var on=sel.indexOf(f)>=0;
-      var us=u(f);
-      return '<div class="dd-opt'+(on?' on':'')+'" onclick="toggleResp(\''+f+'\')">'
+      var ehGestora = f==='__gestora__';
+      var nome = nomeResp(f);
+      var cor = ehGestora ? '#4ade80' : u(f).cor;
+      var ini = ehGestora ? 'G' : iniciais(u(f).nome);
+      return '<div class="dd-opt'+(on?' on':'')+(ehGestora?' divider':'')+'" onclick="toggleResp(\''+f+'\')">'
         +'<span class="dd-check">'+(on?'✓':'')+'</span>'
-        +'<span class="dd-opt-avatar" style="background:'+us.cor+'">'+iniciais(us.nome)+'</span>'
-        +'<span class="dd-opt-nome">'+esc(us.nome)+'</span></div>';
+        +'<span class="dd-opt-avatar" style="background:'+cor+'">'+ini+'</span>'
+        +'<span class="dd-opt-nome">'+esc(nome)+(ehGestora?' (para a gestora)':'')+'</span></div>';
     }).join('');
     ddList='<div class="dd-list">'+optTodos+opts+'</div>';
   }
@@ -703,9 +813,10 @@ function renderModalNova(){
     +ddList+'</div>';
 
   var nBtn = sel.length>1 ? ('Criar '+sel.length+' demandas') : 'Criar demanda';
+  var titulo_modal = d.soGestora ? 'Nova demanda (gestora)' : 'Nova demanda';
 
   return '<div class="modal-overlay" onclick="if(event.target===this)fecharModalNova()"><div class="modal">'
-    +'<div class="modal-title">Nova demanda</div>'
+    +'<div class="modal-title">'+titulo_modal+'</div>'
     +'<div class="modal-field"><label>TÍTULO</label><input type="text" id="m-titulo" placeholder="Ex: Análise foliar lote soja" value="'+esc(d.titulo||'')+'"></div>'
     +'<div class="modal-field"><label>RESPONSÁVEIS</label>'+dropdown+'</div>'
     +'<div class="modal-field"><label>PRIORIDADE</label><select id="m-prio">'+prioOpts+'</select></div>'
@@ -737,9 +848,16 @@ async function salvarNova(){
   };
   state.modalNova=false;
   showToast(sel.length>1?('Criando '+sel.length+' demandas...'):'Criando demanda...');
-  // cria uma demanda separada por responsável (cópias independentes)
+  // cria uma demanda separada por responsável.
+  // __gestora__ vira uma demanda para_gestora (sem responsável de equipe).
   for(var i=0;i<sel.length;i++){
-    var d=Object.assign({},base,{responsavel:sel[i]});
+    var alvo=sel[i];
+    var d;
+    if(alvo==='__gestora__'){
+      d=Object.assign({}, base, {responsavel:'gestora', para_gestora:true});
+    }else{
+      d=Object.assign({}, base, {responsavel:alvo, para_gestora:false});
+    }
     await criarDemanda(d, true);
   }
   await carregarDemandas(); render();
@@ -815,11 +933,17 @@ function renderModalCard(){
 
   var statusInfo = '<span class="prio-badge" style="background:rgba(255,255,255,.06);color:'+STATUS[d.status].cor+'">'+STATUS[d.status].label+'</span>';
   if(d.enviada){
-    statusInfo += ' <span class="valid-badge valid-'+d.validacao+'">'+(d.validacao==='validada'?'✓ Validada':'⏳ Aguardando validação')+'</span>';
+    var vtxt = d.validacao==='ludmila' ? '✓ Validada pela Ludmila'
+             : d.validacao==='rafael' ? '✓ Validada pelo Rafael'
+             : '⏳ Aguardando validação';
+    var vcls = d.validacao==='rafael' ? 'valid-rafael' : (d.validacao==='ludmila'?'valid-validada':'valid-aguardando');
+    statusInfo += ' <span class="valid-badge '+vcls+'">'+vtxt+'</span>';
   }
 
+  // Editar: gestora OU a funcionária dona da demanda. Excluir: só gestora.
+  var podeEditar = isGestora || (state.role==='funcionaria' && d.responsavel===state.usuario);
   var btnExcluir = isGestora ? '<button class="btn-danger" onclick="excluirDemanda(\''+d.id+'\')">Excluir</button>' : '';
-  var btnEditar = isGestora ? '<button class="btn-edit" onclick="abrirModalEditar(\''+d.id+'\')">Editar</button>' : '';
+  var btnEditar = podeEditar ? '<button class="btn-edit" onclick="abrirModalEditar(\''+d.id+'\')">Editar</button>' : '';
 
   return '<div class="modal-overlay" onclick="if(event.target===this)fecharCard()"><div class="modal">'
     +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:14px">'
