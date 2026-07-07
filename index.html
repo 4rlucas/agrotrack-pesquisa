@@ -281,7 +281,7 @@ async function criarDemanda(d, silencioso){
   var row = {
     titulo:d.titulo, descricao:d.descricao||'', responsavel:d.responsavel,
     prioridade:d.prioridade||'media', status:'pendente', enviada:false,
-    para_gestora: d.para_gestora||false,
+    para_gestora: d.para_gestora||false, validado_rafael:false,
     prazo:d.prazo||null, criado_por:state.usuario
   };
   var res = await sb.from('demandas').insert(row).select().single();
@@ -308,22 +308,33 @@ async function enviarParaValidacao(id){
   await carregarDemandas(); render();
 }
 
-async function marcarValidacao(id, validador){
-  // validador: 'ludmila' | 'rafael' | 'aguardando' (reabrir)
-  var nomes={ludmila:'Ludmila', rafael:'Rafael'};
-  await sb.from('demandas').update({validacao:validador, atualizado_em:new Date().toISOString()}).eq('id',id);
-  if(validador==='aguardando'){
-    await logHistorico(id, 'validacao', null, 'Reaberta');
-    showToast('Reaberta');
-  }else{
-    await logHistorico(id, 'validacao', null, 'Validada por '+nomes[validador]);
-    showToast('Validada por '+nomes[validador]);
-  }
+async function validarLudmila(id){
+  await sb.from('demandas').update({validacao:'ludmila', atualizado_em:new Date().toISOString()}).eq('id',id);
+  await logHistorico(id, 'validacao', null, 'Validada pela Ludmila');
+  showToast('Validada pela Ludmila');
+  await carregarDemandas(); render();
+}
+
+async function toggleValidadoRafael(id){
+  var dem = state.demandas.find(function(x){return x.id===id;});
+  if(!dem)return;
+  var novo = !dem.validado_rafael;
+  await sb.from('demandas').update({validado_rafael:novo, atualizado_em:new Date().toISOString()}).eq('id',id);
+  await logHistorico(id, 'validacao', null, novo?'Validada também pelo Rafael':'Validação do Rafael removida');
+  showToast(novo?'Validada pelo Rafael':'Validação do Rafael removida');
+  await carregarDemandas(); render();
+}
+
+async function reabrirValidacao(id){
+  // volta pra aguardando e limpa a validação do Rafael também
+  await sb.from('demandas').update({validacao:'aguardando', validado_rafael:false, atualizado_em:new Date().toISOString()}).eq('id',id);
+  await logHistorico(id, 'validacao', null, 'Reaberta');
+  showToast('Reaberta');
   await carregarDemandas(); render();
 }
 
 async function voltarParaEquipe(id){
-  await sb.from('demandas').update({enviada:false, validacao:'aguardando', atualizado_em:new Date().toISOString()}).eq('id',id);
+  await sb.from('demandas').update({enviada:false, validacao:'aguardando', validado_rafael:false, atualizado_em:new Date().toISOString()}).eq('id',id);
   await logHistorico(id, 'quadro', 'Validação', 'Concluída');
   showToast('Devolvida ao quadro da equipe');
   await carregarDemandas(); render();
@@ -584,9 +595,10 @@ function cardEmValidacao(d){
   var user=u(d.responsavel);
   var badge;
   if(d.validacao==='ludmila'){
-    badge='<span class="valid-badge valid-validada">✓ Validada pela Ludmila</span>';
-  }else if(d.validacao==='rafael'){
-    badge='<span class="valid-badge valid-rafael">✓ Validada pelo Rafael</span>';
+    badge='<div style="display:flex;gap:5px;flex-wrap:wrap">'
+      +'<span class="valid-badge valid-validada">✓ Validada pela Ludmila</span>'
+      +(d.validado_rafael?'<span class="valid-badge valid-rafael">✓ Rafael</span>':'')
+      +'</div>';
   }else{
     badge='<span class="valid-badge valid-aguardando">⏳ Aguardando validação</span>';
   }
@@ -659,14 +671,14 @@ function renderQuadroValidacao(){
   var demandas=state.demandas.filter(function(d){return d.enviada;});
 
   var aguardando=demandas.filter(function(d){return d.validacao==='aguardando';});
-  var valLudmila=demandas.filter(function(d){return d.validacao==='ludmila';});
-  var valRafael=demandas.filter(function(d){return d.validacao==='rafael';});
+  var validadas=demandas.filter(function(d){return d.validacao==='ludmila';});
+  var comRafael=validadas.filter(function(d){return d.validado_rafael;}).length;
 
   var kpis='<div class="cards-grid cols-4">'
     +metric('NA VALIDAÇÃO', demandas.length, 'demandas', 'var(--text)')
     +metric('AGUARDANDO', aguardando.length, 'a validar', 'var(--warn)')
-    +metric('LUDMILA', valLudmila.length, 'validadas', 'var(--accent)')
-    +metric('RAFAEL', valRafael.length, 'validadas', 'var(--purple)')
+    +metric('VALIDADAS', validadas.length, 'pela Ludmila', 'var(--accent)')
+    +metric('C/ RAFAEL', comRafael, 'também', 'var(--purple)')
     +'</div>';
 
   function coluna(titulo, cor, lista){
@@ -675,14 +687,13 @@ function renderQuadroValidacao(){
       +'<div class="kanban-col-header"><span><span class="dot" style="background:'+cor+'"></span>'+titulo+'</span><span>'+lista.length+'</span></div>'
       +'<div class="kanban-col-body">'+items+'</div></div>';
   }
-  var kanban='<div class="kanban-wrap" style="grid-template-columns:repeat(3,1fr)">'
+  var kanban='<div class="kanban-wrap" style="grid-template-columns:repeat(2,1fr)">'
     +coluna('AGUARDANDO VALIDAÇÃO','#fbbf24',aguardando)
-    +coluna('VALIDADA LUDMILA','#4ade80',valLudmila)
-    +coluna('VALIDADA RAFAEL','#c084fc',valRafael)
+    +coluna('VALIDADA LUDMILA','#4ade80',validadas)
     +'</div>';
 
   return '<div class="page">'
-    +'<div class="page-header"><div class="page-title">Validação Gestora</div><div class="page-sub">Ludmila e Rafael validam as demandas concluídas</div></div>'
+    +'<div class="page-header"><div class="page-title">Validação Gestora</div><div class="page-sub">Validação das demandas concluídas</div></div>'
     +kpis+kanban
     +'</div>';
 }
@@ -691,36 +702,42 @@ function cardValidacao(d,isGestora,isRafael){
   var user=u(d.responsavel);
   var podeValidar = isGestora || isRafael;
   var acoes='';
+
   if(d.validacao==='aguardando'){
-    // dois botões: quem valida escolhe na hora
+    // só validação da Ludmila (Rafael não valida antes)
     if(podeValidar){
       acoes='<div class="card-actions">'
-        +'<button class="mini-btn go" onclick="event.stopPropagation();marcarValidacao(\''+d.id+'\',\'ludmila\')">✓ Ludmila</button>'
-        +'<button class="mini-btn val-rafael" onclick="event.stopPropagation();marcarValidacao(\''+d.id+'\',\'rafael\')">✓ Rafael</button>'
-        +'</div>';
-    }
-  }else{
-    // já validada — mostra selo e botão reabrir
-    var selo = d.validacao==='ludmila'
-      ? '<span class="valid-badge valid-validada">✓ Validada Ludmila</span>'
-      : '<span class="valid-badge valid-rafael">✓ Validada Rafael</span>';
-    acoes='<div style="margin-top:8px">'+selo+'</div>';
-    if(podeValidar){
-      acoes+='<div class="card-actions"><button class="mini-btn" onclick="event.stopPropagation();marcarValidacao(\''+d.id+'\',\'aguardando\')">↩ Reabrir</button>'
+        +'<button class="mini-btn go" onclick="event.stopPropagation();validarLudmila(\''+d.id+'\')">✓ Validar (Ludmila)</button>'
         +(isGestora?'<button class="mini-btn" onclick="event.stopPropagation();voltarParaEquipe(\''+d.id+'\')">← Voltar p/ equipe</button>':'')
         +'</div>';
     }
+  }else{
+    // validada pela Ludmila — mostra selos (Ludmila sempre; Rafael se houver)
+    var selos='<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:8px">'
+      +'<span class="valid-badge valid-validada">✓ Ludmila</span>'
+      +(d.validado_rafael?'<span class="valid-badge valid-rafael">✓ Rafael</span>':'')
+      +'</div>';
+    acoes=selos;
+    if(podeValidar){
+      var btns=[];
+      // botão de validar/remover Rafael (mesma cor roxa)
+      if(d.validado_rafael){
+        btns.push('<button class="mini-btn val-rafael" onclick="event.stopPropagation();toggleValidadoRafael(\''+d.id+'\')">✕ Remover Rafael</button>');
+      }else{
+        btns.push('<button class="mini-btn val-rafael" onclick="event.stopPropagation();toggleValidadoRafael(\''+d.id+'\')">+ Validar Rafael</button>');
+      }
+      btns.push('<button class="mini-btn" onclick="event.stopPropagation();reabrirValidacao(\''+d.id+'\')">↩ Reabrir</button>');
+      if(isGestora) btns.push('<button class="mini-btn" onclick="event.stopPropagation();voltarParaEquipe(\''+d.id+'\')">← Voltar p/ equipe</button>');
+      acoes+='<div class="card-actions">'+btns.join('')+'</div>';
+    }
   }
-  // devolver pra equipe também quando aguardando (só gestora)
-  var devolverAguardando = (d.validacao==='aguardando' && isGestora)
-    ? '<div class="card-actions"><button class="mini-btn" onclick="event.stopPropagation();voltarParaEquipe(\''+d.id+'\')">← Voltar p/ equipe</button></div>' : '';
 
   return '<div class="kanban-card" onclick="abrirCard(\''+d.id+'\')">'
     +'<span class="prio-badge prio-'+d.prioridade+'">'+PRIORIDADES[d.prioridade].toUpperCase()+'</span>'
     +'<div class="kanban-card-title">'+esc(d.titulo)+'</div>'
     +(d.descricao?'<div style="font-size:12px;color:var(--text2);margin-bottom:8px;line-height:1.4">'+esc(d.descricao.slice(0,90))+(d.descricao.length>90?'…':'')+'</div>':'')
     +'<div class="kanban-card-meta"><span class="kanban-card-autor" style="background:'+user.corBg+';color:'+user.cor+'"><span class="avatar" style="background:'+user.cor+';color:#0f1117">'+iniciais(user.nome)+'</span>'+esc(user.nome)+'</span></div>'
-    +acoes+devolverAguardando
+    +acoes
     +'</div>';
 }
 
@@ -933,11 +950,12 @@ function renderModalCard(){
 
   var statusInfo = '<span class="prio-badge" style="background:rgba(255,255,255,.06);color:'+STATUS[d.status].cor+'">'+STATUS[d.status].label+'</span>';
   if(d.enviada){
-    var vtxt = d.validacao==='ludmila' ? '✓ Validada pela Ludmila'
-             : d.validacao==='rafael' ? '✓ Validada pelo Rafael'
-             : '⏳ Aguardando validação';
-    var vcls = d.validacao==='rafael' ? 'valid-rafael' : (d.validacao==='ludmila'?'valid-validada':'valid-aguardando');
-    statusInfo += ' <span class="valid-badge '+vcls+'">'+vtxt+'</span>';
+    if(d.validacao==='ludmila'){
+      statusInfo += ' <span class="valid-badge valid-validada">✓ Validada pela Ludmila</span>';
+      if(d.validado_rafael) statusInfo += ' <span class="valid-badge valid-rafael">✓ Rafael</span>';
+    }else{
+      statusInfo += ' <span class="valid-badge valid-aguardando">⏳ Aguardando validação</span>';
+    }
   }
 
   // Editar: gestora OU a funcionária dona da demanda. Excluir: só gestora.
