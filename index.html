@@ -380,7 +380,7 @@ function navItems(){
   var items=[];
   if(state.role!=='rafael') items.push(['quadro','Demandas']);
   if(state.role==='gestora'||state.role==='rafael') items.push(['gestora','Demandas Gestora']);
-  if(state.role==='gestora'||state.role==='rafael') items.push(['validacao','Validação Ludmila']);
+  if(state.role==='gestora'||state.role==='rafael') items.push(['validacao','Validação Gestora']);
   if(state.role==='gestora') items.push(['desempenho','Desempenho da equipe']);
   return items;
 }
@@ -682,7 +682,7 @@ function renderQuadroValidacao(){
     +'</div>';
 
   return '<div class="page">'
-    +'<div class="page-header"><div class="page-title">Validação Ludmila</div><div class="page-sub">Ludmila e Rafael validam as demandas concluídas</div></div>'
+    +'<div class="page-header"><div class="page-title">Validação Gestora</div><div class="page-sub">Ludmila e Rafael validam as demandas concluídas</div></div>'
     +kpis+kanban
     +'</div>';
 }
