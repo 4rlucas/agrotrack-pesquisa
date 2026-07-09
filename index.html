@@ -515,9 +515,9 @@ function cardEquipe(d){
     });
     acoes='<div class="card-actions">'+btns.join('')+'</div>';
   }
-  // gestora envia concluída pra validação
+  // envia concluída pra validação: gestora (qualquer) ou a funcionária dona da demanda
   var envio='';
-  if(isGestora && d.status==='concluida'){
+  if(podeMexer && d.status==='concluida' && !d.enviada){
     envio='<div class="card-actions"><button class="mini-btn go" onclick="event.stopPropagation();enviarParaValidacao(\''+d.id+'\')">→ Enviar p/ validação</button></div>';
   }
 
