@@ -81,6 +81,11 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:1
 .desemp-lbl{font-size:10px;font-family:var(--mono);color:var(--text3);margin-top:3px;letter-spacing:.5px;}
 .kanban-col{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;}
 .kanban-col-header{padding:13px 15px;font-size:11px;font-family:var(--mono);letter-spacing:1.5px;font-weight:500;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);}
+.kanban-col-header.clicavel{cursor:pointer;transition:background .15s;}
+.kanban-col-header.clicavel:hover{background:var(--surface2);color:var(--accent);}
+.kanban-col-header.exp{cursor:pointer;background:var(--accent-light);}
+.kanban-col-exp{border:1px solid var(--accent);}
+.kanban-col-body.exp-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;}
 .kanban-col-header .dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:7px;}
 .kanban-col-body{padding:10px;display:flex;flex-direction:column;gap:8px;min-height:80px;}
 .kanban-card{background:var(--surface2);border:1px solid var(--border2);border-radius:10px;padding:13px;cursor:pointer;transition:all .15s;}
@@ -134,6 +139,7 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:1
 @media(max-width:920px){
   .kanban-wrap,.kanban-wrap.kanban-5{grid-template-columns:1fr;}
   .desemp-grid{grid-template-columns:repeat(2,1fr);}
+  .kanban-col-body.exp-grid{grid-template-columns:repeat(2,1fr);}
   .cards-grid.cols-4{grid-template-columns:repeat(2,1fr);}
 }
 @media(max-width:760px){
@@ -209,7 +215,8 @@ var state = {
   tela:'login', usuario:null, role:null,
   pagina:'quadro',          // quadro | validacao
   demandas:[], historico:[], carregado:false,
-  filtroStatus:'todos', filtroResp:'todos',
+  filtroStatus:'todos', filtroResp:'todos', filtroPrioridade:'todos',
+  colunaExpandida:null,
   modalNova:false, modalData:{},
   cardAberto:null, editData:null,
 };
@@ -414,7 +421,7 @@ function renderApp(){
     +'</div>'
     +'<div class="mobile-topbar"><div class="logo">AgroTrack Pesquisa</div><button class="btn-logout" style="width:auto" onclick="logout()">Sair</button></div>'
     +'<div class="mobile-nav">'+navHTML+'</div>'
-    +'<div class="main">'+content+'</div>'
+    +'<div class="main"'+(state.colunaExpandida?' onclick="recolherColuna()"':'')+'>'+content+'</div>'
     +'</div>'
     +(state.modalNova?renderModalNova():'')
     +(state.cardAberto?renderModalCard():'')
@@ -422,7 +429,9 @@ function renderApp(){
 }
 function roleLabel(r){ return r==='gestora'?'Gestora':r==='rafael'?'Validação':'Equipe de Pesquisa'; }
 
-function irPara(p){ state.pagina=p; state.cardAberto=null; state.editData=null; render(); }
+function irPara(p){ state.pagina=p; state.cardAberto=null; state.editData=null; state.colunaExpandida=null; render(); }
+function expandirColuna(id){ state.colunaExpandida=id; render(); }
+function recolherColuna(){ if(state.colunaExpandida){ state.colunaExpandida=null; render(); } }
 function logout(){ try{ if(_rtChannel){ sb.removeChannel(_rtChannel); _rtChannel=null; } }catch(e){} state.tela='login'; state.usuario=null; state.role=null; state.cardAberto=null; state.editData=null; render(); }
 
 // ---- QUADRO 1: EQUIPE ----
@@ -435,10 +444,11 @@ function renderQuadroEquipe(){
   if(isFunc) demandas = demandas.filter(function(d){return d.responsavel===state.usuario;});
 
   // filtros (gestora)
-  var fStatus=state.filtroStatus, fResp=state.filtroResp;
+  var fStatus=state.filtroStatus, fResp=state.filtroResp, fPrio=state.filtroPrioridade;
   var filtradas = demandas.filter(function(d){
     if(fStatus!=='todos' && d.status!==fStatus) return false;
     if(fResp!=='todos' && d.responsavel!==fResp) return false;
+    if(fPrio!=='todos' && d.prioridade!==fPrio) return false;
     return true;
   });
 
@@ -466,28 +476,48 @@ function renderQuadroEquipe(){
       return [f, u(f).nome, demandas.filter(function(d){return d.responsavel===f;}).length];
     }));
     var rpHTML=rpTabs.map(function(t){return'<button class="filtro-tab'+(fResp===t[0]?' active':'')+'" onclick="state.filtroResp=\''+t[0]+'\';render()">'+t[1]+' ('+t[2]+')</button>';}).join('');
+    var prTabs=[['todos','Todas',demandas.length]].concat(Object.keys(PRIORIDADES).map(function(p){
+      return [p, PRIORIDADES[p], demandas.filter(function(d){return d.prioridade===p;}).length];
+    }));
+    var prHTML=prTabs.map(function(t){return'<button class="filtro-tab'+(fPrio===t[0]?' active':'')+'" onclick="state.filtroPrioridade=\''+t[0]+'\';render()">'+t[1]+' ('+t[2]+')</button>';}).join('');
     filtrosHTML='<div class="card" style="margin-bottom:16px">'
       +'<div style="margin-bottom:12px"><div class="section-title" style="margin-bottom:8px">POR STATUS</div><div class="filtro-tabs">'+stHTML+'</div></div>'
-      +'<div><div class="section-title" style="margin-bottom:8px">POR RESPONSÁVEL</div><div class="filtro-tabs">'+rpHTML+'</div></div>'
+      +'<div style="margin-bottom:12px"><div class="section-title" style="margin-bottom:8px">POR RESPONSÁVEL</div><div class="filtro-tabs">'+rpHTML+'</div></div>'
+      +'<div><div class="section-title" style="margin-bottom:8px">POR PRIORIDADE</div><div class="filtro-tabs">'+prHTML+'</div></div>'
       +'</div>';
   }
 
-  // kanban: 4 colunas de status + coluna "Em validação" (demandas enviadas)
+  // kanban: monta a lista de colunas (4 status + Em validação)
   var enviadas = filtradas.filter(function(d){return d.enviada;});
-  var kanbanCols = STATUS_ORDEM.map(function(st){
-    // concluídas que já foram enviadas saem da coluna Concluída (vão pra Em validação)
-    var col=filtradas.filter(function(d){return d.status===st && !d.enviada;});
-    var items=col.map(function(d){return cardEquipe(d);}).join('') || '<div class="empty-col">Nenhuma demanda</div>';
-    return '<div class="kanban-col">'
-      +'<div class="kanban-col-header"><span><span class="dot" style="background:'+STATUS[st].cor+'"></span>'+STATUS[st].label.toUpperCase()+'</span><span>'+col.length+'</span></div>'
-      +'<div class="kanban-col-body">'+items+'</div></div>';
+  var colunas = STATUS_ORDEM.map(function(st){
+    return {
+      id: st,
+      titulo: STATUS[st].label.toUpperCase(),
+      cor: STATUS[st].cor,
+      lista: filtradas.filter(function(d){return d.status===st && !d.enviada;}),
+      render: cardEquipe
+    };
   });
-  // coluna Em validação
-  var itemsVal = enviadas.map(function(d){return cardEmValidacao(d);}).join('') || '<div class="empty-col">Nenhuma demanda</div>';
-  kanbanCols.push('<div class="kanban-col">'
-    +'<div class="kanban-col-header"><span><span class="dot" style="background:#a78bfa"></span>EM VALIDAÇÃO</span><span>'+enviadas.length+'</span></div>'
-    +'<div class="kanban-col-body">'+itemsVal+'</div></div>');
-  var kanban='<div class="kanban-wrap kanban-5">'+kanbanCols.join('')+'</div>';
+  colunas.push({ id:'validacao', titulo:'EM VALIDAÇÃO', cor:'#a78bfa', lista:enviadas, render:cardEmValidacao });
+
+  var kanban;
+  if(state.colunaExpandida){
+    // modo expandido: só a coluna escolhida, cards em grade
+    var c = colunas.filter(function(x){return x.id===state.colunaExpandida;})[0] || colunas[0];
+    var itemsExp = c.lista.map(function(d){return c.render(d);}).join('') || '<div class="empty-col">Nenhuma demanda</div>';
+    kanban='<div class="kanban-col kanban-col-exp" onclick="event.stopPropagation()">'
+      +'<div class="kanban-col-header exp" onclick="event.stopPropagation();recolherColuna()"><span><span class="dot" style="background:'+c.cor+'"></span>'+c.titulo+' ▾</span><span style="display:flex;gap:10px;align-items:center"><span style="font-size:10px;color:var(--text3)">clique para recolher</span>'+c.lista.length+'</span></div>'
+      +'<div class="kanban-col-body exp-grid">'+itemsExp+'</div></div>';
+  }else{
+    // modo normal: 5 colunas, clicar no cabeçalho expande
+    var cols = colunas.map(function(c){
+      var items=c.lista.map(function(d){return c.render(d);}).join('') || '<div class="empty-col">Nenhuma demanda</div>';
+      return '<div class="kanban-col">'
+        +'<div class="kanban-col-header clicavel" onclick="event.stopPropagation();expandirColuna(\''+c.id+'\')"><span><span class="dot" style="background:'+c.cor+'"></span>'+c.titulo+' ▸</span><span>'+c.lista.length+'</span></div>'
+        +'<div class="kanban-col-body">'+items+'</div></div>';
+    });
+    kanban='<div class="kanban-wrap kanban-5">'+cols.join('')+'</div>';
+  }
 
   var btnNova = (isGestora||isFunc) ? '<button class="btn-save" onclick="abrirModalNova()">+ Nova demanda</button>' : '';
 
