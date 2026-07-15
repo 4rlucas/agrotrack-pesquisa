@@ -217,6 +217,7 @@ var state = {
   demandas:[], historico:[], carregado:false,
   filtroStatus:'todos', filtroResp:'todos', filtroPrioridade:'todos',
   colunaExpandida:null,
+  filtroPrioridadeG:'todos', colunaExpandidaG:null,
   modalNova:false, modalData:{},
   cardAberto:null, editData:null,
 };
@@ -421,7 +422,7 @@ function renderApp(){
     +'</div>'
     +'<div class="mobile-topbar"><div class="logo">AgroTrack Pesquisa</div><button class="btn-logout" style="width:auto" onclick="logout()">Sair</button></div>'
     +'<div class="mobile-nav">'+navHTML+'</div>'
-    +'<div class="main"'+(state.colunaExpandida?' onclick="recolherColuna()"':'')+'>'+content+'</div>'
+    +'<div class="main"'+((state.colunaExpandida||state.colunaExpandidaG)?' onclick="recolherColuna();recolherColunaG()"':'')+'>'+content+'</div>'
     +'</div>'
     +(state.modalNova?renderModalNova():'')
     +(state.cardAberto?renderModalCard():'')
@@ -429,9 +430,11 @@ function renderApp(){
 }
 function roleLabel(r){ return r==='gestora'?'Gestora':r==='rafael'?'Validação':'Equipe de Pesquisa'; }
 
-function irPara(p){ state.pagina=p; state.cardAberto=null; state.editData=null; state.colunaExpandida=null; render(); }
+function irPara(p){ state.pagina=p; state.cardAberto=null; state.editData=null; state.colunaExpandida=null; state.colunaExpandidaG=null; render(); }
 function expandirColuna(id){ state.colunaExpandida=id; render(); }
 function recolherColuna(){ if(state.colunaExpandida){ state.colunaExpandida=null; render(); } }
+function expandirColunaG(id){ state.colunaExpandidaG=id; render(); }
+function recolherColunaG(){ if(state.colunaExpandidaG){ state.colunaExpandidaG=null; render(); } }
 function logout(){ try{ if(_rtChannel){ sb.removeChannel(_rtChannel); _rtChannel=null; } }catch(e){} state.tela='login'; state.usuario=null; state.role=null; state.cardAberto=null; state.editData=null; render(); }
 
 // ---- QUADRO 1: EQUIPE ----
@@ -565,7 +568,14 @@ function cardEquipe(d){
 // ---- ABA: DEMANDAS GESTORA (gestora e Rafael) ----
 function renderQuadroGestora(){
   var isGestora = state.role==='gestora';
+  var podeFiltrar = isGestora || state.role==='rafael';
   var demandas = state.demandas.filter(function(d){return d.para_gestora;});
+
+  var fPrio=state.filtroPrioridadeG;
+  var filtradas = demandas.filter(function(d){
+    if(fPrio!=='todos' && d.prioridade!==fPrio) return false;
+    return true;
+  });
 
   var total=demandas.length;
   var concl=demandas.filter(function(d){return d.status==='concluida';}).length;
@@ -579,13 +589,40 @@ function renderQuadroGestora(){
     +'<div class="card"><div class="metric-label">PROGRESSO</div><div class="metric-value">'+pct+'%</div><div class="progress-track"><div class="progress-fill" style="width:'+pct+'%"></div></div></div>'
     +'</div>';
 
-  var kanban='<div class="kanban-wrap">'+STATUS_ORDEM.map(function(st){
-    var col=demandas.filter(function(d){return d.status===st;});
-    var items=col.map(function(d){return cardGestora(d);}).join('') || '<div class="empty-col">Nenhuma demanda</div>';
-    return '<div class="kanban-col">'
-      +'<div class="kanban-col-header"><span><span class="dot" style="background:'+STATUS[st].cor+'"></span>'+STATUS[st].label.toUpperCase()+'</span><span>'+col.length+'</span></div>'
-      +'<div class="kanban-col-body">'+items+'</div></div>';
-  }).join('')+'</div>';
+  // filtro por prioridade (gestora e Rafael)
+  var filtrosHTML='';
+  if(podeFiltrar){
+    var prTabs=[['todos','Todas',demandas.length]].concat(Object.keys(PRIORIDADES).map(function(p){
+      return [p, PRIORIDADES[p], demandas.filter(function(d){return d.prioridade===p;}).length];
+    }));
+    var prHTML=prTabs.map(function(t){return'<button class="filtro-tab'+(fPrio===t[0]?' active':'')+'" onclick="state.filtroPrioridadeG=\''+t[0]+'\';render()">'+t[1]+' ('+t[2]+')</button>';}).join('');
+    filtrosHTML='<div class="card" style="margin-bottom:16px">'
+      +'<div><div class="section-title" style="margin-bottom:8px">POR PRIORIDADE</div><div class="filtro-tabs">'+prHTML+'</div></div>'
+      +'</div>';
+  }
+
+  // colunas (4 status)
+  var colunas = STATUS_ORDEM.map(function(st){
+    return { id:st, titulo:STATUS[st].label.toUpperCase(), cor:STATUS[st].cor,
+             lista:filtradas.filter(function(d){return d.status===st;}) };
+  });
+
+  var kanban;
+  if(state.colunaExpandidaG){
+    var c = colunas.filter(function(x){return x.id===state.colunaExpandidaG;})[0] || colunas[0];
+    var itemsExp = c.lista.map(function(d){return cardGestora(d);}).join('') || '<div class="empty-col">Nenhuma demanda</div>';
+    kanban='<div class="kanban-col kanban-col-exp" onclick="event.stopPropagation()">'
+      +'<div class="kanban-col-header exp" onclick="event.stopPropagation();recolherColunaG()"><span><span class="dot" style="background:'+c.cor+'"></span>'+c.titulo+' ▾</span><span style="display:flex;gap:10px;align-items:center"><span style="font-size:10px;color:var(--text3)">clique para recolher</span>'+c.lista.length+'</span></div>'
+      +'<div class="kanban-col-body exp-grid">'+itemsExp+'</div></div>';
+  }else{
+    var cols = colunas.map(function(c){
+      var items=c.lista.map(function(d){return cardGestora(d);}).join('') || '<div class="empty-col">Nenhuma demanda</div>';
+      return '<div class="kanban-col">'
+        +'<div class="kanban-col-header clicavel" onclick="event.stopPropagation();expandirColunaG(\''+c.id+'\')"><span><span class="dot" style="background:'+c.cor+'"></span>'+c.titulo+' ▸</span><span>'+c.lista.length+'</span></div>'
+        +'<div class="kanban-col-body">'+items+'</div></div>';
+    });
+    kanban='<div class="kanban-wrap">'+cols.join('')+'</div>';
+  }
 
   // só a gestora cria demanda pra si mesma nesta aba
   var btnNova = isGestora ? '<button class="btn-save" onclick="abrirModalNova(true)">+ Nova demanda</button>' : '';
@@ -595,7 +632,7 @@ function renderQuadroGestora(){
       +'<div><div class="page-title">Demandas Gestora</div><div class="page-sub">Demandas atribuídas à gestora · '+total+' no total</div></div>'
       +btnNova
     +'</div>'
-    +kpis+kanban
+    +kpis+filtrosHTML+kanban
     +'</div>';
 }
 
